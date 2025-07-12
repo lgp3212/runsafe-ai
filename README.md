@@ -1,4 +1,4 @@
-# runsafe-ai - intelligent, "safety-first" route planning for runners 
+# runsafe-ai
 
 ## vision
 ai-powered platform that helps runners (particularly female-presenting) find safe routes using crime data, community insights, and real-time analysis
