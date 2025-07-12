@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+import requests
 
 app = FastAPI(title="runsafe-ai", version="0.1.0")
 
@@ -48,3 +49,55 @@ def analyze_route(start_lat: float, start_lng: float, end_lat: float, end_lng: f
             "consider running with a partner on this route"
         ]
     }
+
+# replacing the mock data --> real crime data apis, langgraph ai agents, 
+    # mapping services, ML models, dynamic recommendations
+
+@app.get("/api/crashes/recent")
+def get_recent_crashes(limit: int = 10):
+    url = "https://data.cityofnewyork.us/resource/h9gi-nx95.json"
+    params = {
+        "$limit": limit,
+        "$order": "crash_date DESC",
+        "$where": "latitude IS NOT NULL AND longitude IS NOT NULL"
+    }
+
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        
+        if response.status_code == 200:
+            crashes = response.json()
+
+            clean_crashes = []
+            for crash in crashes:
+                clean_crash = {
+                    "crash_id": crash.get("collision_id"),
+                    "date": crash.get("crash_date"),
+                    "location": {
+                        "lat": float(crash.get("latitude", 0)),
+                        "lng": float(crash.get("longitude", 0))
+                    },
+                    "street": crash.get("on_street_name", "Unknown"),
+                    "borough": crash.get("borough", "Unknown"),
+                    "injuries": {
+                        "pedestrians": int(crash.get("number_of_pedestrians_injured", 0)),
+                        "cyclists": int(crash.get("number_of_cyclist_injured", 0)),
+                        "total": int(crash.get("number_of_persons_injured", 0))
+                    },
+                    "fatalities": {
+                        "pedestrians": int(crash.get("number_of_pedestrians_killed", 0)),
+                        "cyclists": int(crash.get("number_of_cyclist_killed", 0)),
+                        "total": int(crash.get("number_of_persons_killed", 0))
+                    }
+                }
+                clean_crashes.append(clean_crash)
+            
+            return {
+                "total_crashes": len(clean_crashes),
+                "data_source": "NYC Vision Zero / Motor Vehicle Collisions",
+                "crashes": clean_crashes
+            }
+        else:
+            return {"error": f"NYC API returned status {response.status_code}"}
+    except Exception as e:
+        return {"error": f"Failed to fetch data: {str(e)}"}
