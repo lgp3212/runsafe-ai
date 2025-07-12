@@ -2,8 +2,22 @@ from fastapi import FastAPI
 import requests
 import math
 from datetime import datetime, timedelta
+from ai_agents import SafetyAnalysisAgent
 
 app = FastAPI(title="runsafe-ai", version="0.1.0")
+# safety_ai = SafetyAnalysisAgent() # initialize, get API key
+
+safety_ai = None
+
+def get_safety_ai():
+    global safety_ai
+    if safety_ai is None:
+        try:
+            safety_ai = SafetyAnalysisAgent()
+        except Exception as e:
+            print(f"Could not initialize AI agent: {e}")
+            return None
+    return safety_ai
 
 @app.get("/")
 def read_root():
@@ -201,3 +215,29 @@ def get_crashes_near_me(lat: float, lng: float, radius_km: float = 1.0, days_bac
         
     except Exception as e:
         return {"error": f"Failed to fetch nearby crashes: {str(e)}"}
+    
+@app.get("/api/safety/ai-analysis")
+def get_ai_safety_analysis(lat: float, lng: float, radius_km: float = 0.5):
+    """Get AI-powered safety analysis for runners"""
+    
+    # Get the crash data
+    crash_response = get_crashes_near_me(lat, lng, radius_km)
+    
+    # Try to get AI analysis
+    ai_agent = get_safety_ai()
+    if ai_agent:
+        location_context = f"Location: {lat}, {lng} (radius: {radius_km}km)"
+        ai_insights = ai_agent.analyze_crash_data(crash_response, location_context)
+    else:
+        ai_insights = {
+            "ai_analysis": "AI analysis temporarily unavailable",
+            "recommendations": ["Review crash data manually"],
+            "confidence": "low"
+        }
+    
+    return {
+        "location": {"lat": lat, "lng": lng, "radius_km": radius_km},
+        "crash_data": crash_response["summary"],
+        "ai_insights": ai_insights,
+        "powered_by": "GPT-4o-mini + NYC Vision Zero Data"
+    }
