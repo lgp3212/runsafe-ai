@@ -1,5 +1,7 @@
 from fastapi import FastAPI
 import requests
+import math
+from datetime import datetime, timedelta
 
 app = FastAPI(title="runsafe-ai", version="0.1.0")
 
@@ -101,3 +103,101 @@ def get_recent_crashes(limit: int = 10):
             return {"error": f"NYC API returned status {response.status_code}"}
     except Exception as e:
         return {"error": f"Failed to fetch data: {str(e)}"}
+    
+def euc_distance(lat1: float, lng1: float, lat2: float, lng2: float): # utils?
+    R = 6371
+    lat1_rad = math.radians(lat1)
+    lng1_rad = math.radians(lng1)
+    lat2_rad = math.radians(lat2)
+    lng2_rad = math.radians(lng2)
+
+    dlat = lat2_rad - lat1_rad
+    dlng = lng2_rad - lng1_rad
+    
+    a = math.sin(dlat/2)**2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlng/2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+
+    return R * c
+
+@app.get("/api/crashes/near-me")
+def get_crashes_near_me(lat: float, lng: float, radius_km: float = 1.0, days_back: int = 30):
+    cutoff_date = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+    url = "https://data.cityofnewyork.us/resource/h9gi-nx95.json"
+    params = {
+        "$limit": 500,  # bringing in more records
+        "$order": "crash_date DESC",
+        "$where": f"latitude IS NOT NULL AND longitude IS NOT NULL AND crash_date >= '{cutoff_date}'"
+    }
+    try:
+        response = requests.get(url, params=params, timeout=15)
+        
+        if response.status_code == 200:
+            all_crashes = response.json()
+
+            nearby_crashes = [] # filter to within radius
+            for crash in all_crashes:
+                try: 
+                    crash_lat = float(crash.get("latitude", 0))
+                    crash_lng = float(crash.get("longitude", 0))
+
+                    distance = euc_distance(lat, lng, crash_lat, crash_lng)
+
+                    if distance <= radius_km:
+                        clean_crash = {
+                            "crash_id": crash.get("collision_id"),
+                            "date": crash.get("crash_date"),
+                            "distance_km": round(distance, 2),
+                            "location": {
+                                "lat": crash_lat,
+                                "lng": crash_lng
+                            },
+                            "street": crash.get("on_street_name", "Unknown"),
+                            "borough": crash.get("borough", "Unknown"),
+                            "injuries": {
+                                "pedestrians": int(crash.get("number_of_pedestrians_injured", 0)),
+                                "cyclists": int(crash.get("number_of_cyclist_injured", 0)),
+                                "total": int(crash.get("number_of_persons_injured", 0))
+                            },
+                            "fatalities": {
+                                "pedestrians": int(crash.get("number_of_pedestrians_killed", 0)),
+                                "cyclists": int(crash.get("number_of_cyclist_killed", 0)),
+                                "total": int(crash.get("number_of_persons_killed", 0))
+                            },
+                            "contributing_factors": [
+                                crash.get("contributing_factor_vehicle_1", ""),
+                                crash.get("contributing_factor_vehicle_2", "")
+                            ]
+                        }
+                        nearby_crashes.append(clean_crash)
+                except (ValueError, TypeError):
+                    continue
+
+            # sort by distance
+            nearby_crashes.sort(key=lambda x: x["distance_km"]) 
+
+            # safety summary
+            total_crashes = len(nearby_crashes)
+            pedestrian_injuries = sum(crash["injuries"]["pedestrians"] for crash in nearby_crashes)
+            cyclist_injuries = sum(crash["injuries"]["cyclists"] for crash in nearby_crashes)
+            total_fatalities = sum(crash["fatalities"]["total"] for crash in nearby_crashes)
+
+            return {
+                "search_location": {"lat": lat, "lng": lng},
+                "search_radius_km": radius_km,
+                "days_searched": days_back,
+                "summary": {
+                    "total_crashes": total_crashes,
+                    "pedestrian_injuries": pedestrian_injuries,
+                    "cyclist_injuries": cyclist_injuries,
+                    "total_fatalities": total_fatalities,
+                    "safety_concern_level": "Critical" if total_fatalities > 0 else "High" if pedestrian_injuries > 0 or cyclist_injuries > 0 else "Moderate" if total_crashes >= 3 else "Low"
+                },
+                "crashes": nearby_crashes[:20],  # Limit to 20 closest crashes
+                "data_source": "NYC Vision Zero / Motor Vehicle Collisions"
+            }
+        
+        else: 
+            return {"error": f"NYC API returned status {response.status_code}"}
+        
+    except Exception as e:
+        return {"error": f"Failed to fetch nearby crashes: {str(e)}"}
