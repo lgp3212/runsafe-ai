@@ -3,11 +3,55 @@ import requests
 import math
 from datetime import datetime, timedelta
 from ai_agents import SafetyAnalysisAgent
+#from test_google_routes import GoogleRoutesAPI
+import get_routes
+import polyline
+import polyline_safety_analysis as p
 
 app = FastAPI(title="runsafe-ai", version="0.1.0")
+#google_routes = GoogleRoutesAPI()
 # safety_ai = SafetyAnalysisAgent() # initialize, get API key
 
 safety_ai = None
+
+def decode_route_polyline(encoded_polyline):
+    """Decode Google's polyline to get all route coordinates"""
+    if not encoded_polyline:
+        return []
+    
+    try:
+        # Decode polyline to list of [lat, lng] coordinates
+        coordinates = polyline.decode(encoded_polyline)
+        return [{"lat": lat, "lng": lng} for lat, lng in coordinates]
+    except Exception as e:
+        print(f"Error decoding polyline: {e}")
+        return []
+
+def sample_route_points(route_points, max_samples=10):
+    """Sample points along route to avoid too many API calls"""
+    if not route_points or len(route_points) <= max_samples:
+        return route_points
+    
+    # Take evenly spaced points along the route
+    step = len(route_points) // max_samples
+    sampled_points = []
+    
+    for i in range(0, len(route_points), step):
+        sampled_points.append({
+            **route_points[i],
+            "route_index": i,
+            "route_progress": round((i / len(route_points)) * 100, 1)  # Percentage along route
+        })
+    
+    # Always include the last point
+    if route_points[-1] not in sampled_points:
+        sampled_points.append({
+            **route_points[-1],
+            "route_index": len(route_points) - 1,
+            "route_progress": 100.0
+        })
+    
+    return sampled_points
 
 def get_safety_ai():
     global safety_ai
@@ -241,3 +285,38 @@ def get_ai_safety_analysis(lat: float, lng: float, radius_km: float = 0.5):
         "ai_insights": ai_insights,
         "powered_by": "GPT-4o-mini + NYC Vision Zero Data"
     }
+
+@app.get("/api/routes/generate")
+@app.get("/api/routes/generate")
+def generate_running_routes(start_lat: float, start_lng: float, target_distance_km: float = 5.0):
+    """Generate routes with detailed polyline-based safety analysis"""
+    
+    # Use the new polyline-based function
+    enhanced_routes = p.generate_running_routes_with_polyline_safety(
+        start_lat, 
+        start_lng, 
+        target_distance_km,
+        get_routes.optimized_route_finder,  # Your route generation function
+        get_crashes_near_me  # Your crash data function
+    )
+    
+    return {
+        "start_location": {"lat": start_lat, "lng": start_lng},
+        "target_distance_km": target_distance_km,
+        "route_options": enhanced_routes,
+        "total_routes_generated": len(enhanced_routes),
+        "analysis_method": "Polyline-based safety analysis with 8 sample points per route"
+    }
+
+def get_safety_level(safety_score):
+    """Convert numeric safety score to descriptive level"""
+    if safety_score >= 90:
+        return "Very Safe"
+    elif safety_score >= 75:
+        return "Safe"
+    elif safety_score >= 60:
+        return "Moderate Risk"
+    elif safety_score >= 40:
+        return "Higher Risk"
+    else:
+        return "High Risk"
