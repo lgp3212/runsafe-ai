@@ -101,7 +101,7 @@ def calculate_and_test_endpoints(start_lat, start_lng, target_distance, all_rout
     
     phase1_routes = []
     
-    for endpoint in endpoints:
+    for i, endpoint in enumerate(endpoints):
         print(f"   Testing {endpoint['direction']} route...")
         
         google_result = test_google_routes_distance(
@@ -116,17 +116,15 @@ def calculate_and_test_endpoints(start_lat, start_lng, target_distance, all_rout
             accuracy = 100 * (1 - difference / target_distance)
             
             route_info = {
+                "id": i + 1,
                 "direction": endpoint["direction"],
-                "multiplier": optimal_multiplier,
-                "one_way_planned": one_way_distance,
-                "one_way_actual": one_way_actual,
-                "total_distance": total_distance,
-                "target_distance": target_distance,
-                "distance_difference": difference,
                 "accuracy": accuracy,
+                "distance": {
+                    "target_distance": target_distance,
+                    "total_distance": total_distance,
+                },
                 "endpoint": {"lat": endpoint["lat"], "lng": endpoint["lng"]},
-                "polyline": google_result.get("polyline", ""),
-                "phase": 1
+                "polyline": google_result.get("polyline", "")
             }
             phase1_routes.append(route_info)
             all_routes.append(route_info)
@@ -168,22 +166,14 @@ def optimized_route_finder(start_lat, start_lng, target_distance):
         decent_routes = [r for r in all_routes if r['accuracy'] >= 80]
         final_routes = sorted(decent_routes, key=lambda x: x['accuracy'], reverse=True)
     
-    total_api_calls = len([r for r in all_routes if 'phase' in r])  
-    
     print(f"🏆 FINAL TOP 3 ROUTES:")
     print("=" * 60)
     
     for i, route in enumerate(final_routes, 1):
-        print(f"{i}. {route['direction']} Route (Phase {route['phase']}):")
-        print(f"   📏 Total distance: {route['total_distance']:.2f}km (target: {route['target_distance']:.2f}km)")
+        print(f"{i}. {route['direction']}")
         print(f"   🎯 Accuracy: {route['accuracy']:.1f}%")
         print(f"   📍 Endpoint: ({route['endpoint']['lat']:.4f}, {route['endpoint']['lng']:.4f})")
-        print(f"   ⚙️  Used multiplier: {route['multiplier']} (one-way: {route['one_way_actual']:.2f}km)")
         print()
-    
-    print(f"API Efficiency:")
-    print(f"   Total API calls used: {total_api_calls}")
-    
     return final_routes
 
 

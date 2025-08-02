@@ -14,93 +14,57 @@ class SafetyAnalysisAgent:
             raise ValueError("OPENAI_API_KEY not found in .env file")
         self.client = openai.OpenAI(api_key=api_key)
 
-    def crash_data_llm_call(self, running_metadata) -> Dict:
-
-        # FIRST, CLEAN RUNNING METADATA. IT IS TOO LONG
-        # THEN WRITE PREPROCESSING FUNC TO UNPACK IT
-        # FEED ONLY WHAT IS NECESSARY TO LLM - WE WANT LLM 
-        # TO TAKE SAFETY SCORE AND COORDINATES.
-        # TO GIVE THE ROUTE A FUN NAME 
-        # WE BASICALLY WANT LLM TO RECOMMEND TOP 3 ROUTES
-        
-
-        crash_data = {}
+    def preprocess_for_llm(route_data):
+        for route in route_data["route_options"]:
+            if "polyline" in route:
+                del route["polyline"] 
+        return route_data
 
 
-        summary = crash_data.get("summary", {})
-        crashes = crash_data.get("crashes", [])
-        prompt = f"""
-        You are a running safety expert analyzing crash data for a runner planning a route.
-
-        LOCATION: {location_context}
-        RECENT CRASH DATA (last 30 days):
-        - Total crashes: {summary.get("total_crashes", 0)}
-        - Pedestrian injuries: {summary.get("pedestrian_injuries", 0)}
-        - Cyclist injuries: {summary.get("cyclist_injuries", 0)}
-        - Total fatalities: {summary.get("total_fatalities", 0)}
-
-        SPECIFIC INCIDENTS:
+    def route_recommendation_llm_call(self, running_metadata) -> Dict:
         """
-        for crash in crashes[:3]:  # closest 3 crashes
-            prompt += f"""
-        - {crash.get("distance_km", 0):.2f}km away on {crash.get("street", "Unknown Street")}
-        - Date: {crash.get("date", "Unknown")}
-        - Injuries: {crash.get("injuries", {}).get("total", 0)} total, {crash.get("injuries", {}).get("pedestrians", 0)} pedestrians
-        - Cause: {", ".join(crash.get("contributing_factors", []))}
+        Get LLM route recommendations based on safety and accuracy data
+        WIP -- next session
         """
-        
-        prompt += """
+        return {}
 
-        Provide a runner-specific safety analysis with:
-        1. Overall safety assessment for runners in this area
-        2. Specific risks based on the crash patterns
-        3. Practical recommendations for safe running
-        4. Best times/conditions to run here
-        5. Any areas or streets to avoid
-
-        Be conversational, helpful, and focused on pedestrian safety. Keep it under 200 words.
+    def _extract_top_recommendation(self, analysis_text: str, routes: List[Dict]) -> Dict:
         """
+        Try to extract which route the LLM recommended
+        """
+        analysis_lower = analysis_text.lower()
         
-        try:
-            response = self.client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "You are an expert running safety advisor who analyzes traffic data to help runners stay safe."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=300, # word count
-                temperature=0.7 # creativity level 
-            )
+        for route in routes:
+            direction = route["direction"].lower()
+            route_id = str(route["id"])
             
-            ai_analysis = response.choices[0].message.content
-            
-            # extract key recommendations (simple keyword extraction)
-            recommendations = self._extract_recommendations(ai_analysis)
-            
-            return {
-                "ai_analysis": ai_analysis,
-                "recommendations": recommendations,
-                "confidence": "high" if summary.get("total_crashes", 0) > 0 else "moderate",
-                "analysis_type": "crash_pattern_analysis"
-            }
-            
-        except Exception as e:
-            return {
-                "ai_analysis": f"Unable to generate AI analysis: {str(e)}",
-                "recommendations": ["Check crash data manually", "Exercise caution"],
-                "confidence": "low",
-                "analysis_type": "error"
-            }
-    
-    def _extract_recommendations(self, analysis_text: str) -> List[str]:
-        # keyword-based extraction (WIP)
-        recommendations = []
+            if any(phrase in analysis_lower for phrase in [
+                f"recommend route {route_id}",
+                f"choose route {route_id}",
+                f"recommend {direction}",
+                f"choose {direction}", 
+                f"route {route_id}",
+                f"{direction} route"
+            ]):
+                return {
+                    "id": route["id"],
+                    "direction": route["direction"],
+                    "safety_score": route["safety"]["score"],
+                    "accuracy": route["accuracy"]
+                }
         
-        lines = analysis_text.split("\n")
-        for line in lines:
-            if any(keyword in line.lower() for keyword in ["recommend", "avoid", "use", "stay", "choose"]):
-                clean_line = line.strip("- ").strip()
-                if len(clean_line) > 10:  # filter out very short lines
-                    recommendations.append(clean_line)
-        
-        return recommendations[:5]  # limit to 5 recommendations
+        # default to highest combined score if can't parse
+        best_route = max(routes, key=lambda x: (x["safety"]["score"] + x["accuracy"]) / 2)
+        return {
+            "id": best_route["id"],
+            "direction": best_route["direction"],
+            "safety_score": best_route["safety"]["score"],
+            "accuracy": best_route["accuracy"]
+        }
+
+    def get_route_recommendations(self, running_metadata) -> Dict:
+        """
+        Main function to call for route recommendations
+        Replace the old crash_data_llm_call with this function
+        """
+        return self.route_recommendation_llm_call(running_metadata)

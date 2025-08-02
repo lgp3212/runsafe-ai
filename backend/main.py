@@ -10,19 +10,21 @@ import polyline_safety_analysis as p
 from constants import SafetyApi
 
 app = FastAPI(title="runsafe-ai", version="0.1.0")
-#google_routes = GoogleRoutesAPI()
-# safety_ai = SafetyAnalysisAgent() # initialize, get API key
 
 safety_ai = None
-
 
 def get_safety_ai():
     global safety_ai
     if safety_ai is None:
         try:
+            print("Attempting to initialize SafetyAnalysisAgent...")
             safety_ai = SafetyAnalysisAgent()
+            print("SafetyAnalysisAgent initialized successfully!")
         except Exception as e:
             print(f"Could not initialize AI agent: {e}")
+            print(f"Error type: {type(e)}")
+            import traceback
+            traceback.print_exc()
             return None
     return safety_ai
     
@@ -130,9 +132,9 @@ def get_ai_safety_analysis(lat: float, lng: float, target_distance_km: float = 0
 
 @app.get("/api/routes/generate")
 def generate_running_routes(start_lat: float, start_lng: float, target_distance_km: float = 5.0):
-    """Generate routes with detailed polyline-based safety analysis"""
+    """Generate routes and get AI recommendations"""
     
-    # Use the new polyline-based function
+    # Generate routes with safety analysis
     enhanced_routes = p.generate_running_routes_with_polyline_safety(
         start_lat, 
         start_lng, 
@@ -141,12 +143,39 @@ def generate_running_routes(start_lat: float, start_lng: float, target_distance_
         get_crashes_near_me
     )
     
-    return {
+    # prep metadata for LLM
+    route_metadata = {
         "start_location": {"lat": start_lat, "lng": start_lng},
         "target_distance_km": target_distance_km,
-        "route_options": enhanced_routes,
-        "total_routes_generated": len(enhanced_routes),
-        "analysis_method": "Polyline-based safety analysis with 8 sample points per route"
+        "route_options": enhanced_routes
+    }
+    
+    ai_agent = get_safety_ai()
+    if ai_agent:
+        try:
+            ai_recommendations = ai_agent.get_route_recommendations(route_metadata)
+        except Exception as e:
+            ai_recommendations = {
+                "ai_analysis": f"AI analysis failed: {str(e)}",
+                "recommended_route": None,
+                "confidence": "low",
+                "analysis_type": "error"
+            }
+    else:
+        ai_recommendations = {
+            "ai_analysis": "AI analysis temporarily unavailable",
+            "recommended_route": None,
+            "confidence": "low",
+            "analysis_type": "unavailable"
+        }
+    
+    return {
+        "location": {
+            "coordinates": f"{start_lat}, {start_lng}",
+            "target_distance_km": target_distance_km
+        },
+        "ai_recommendations": ai_recommendations,
+        "routes_analyzed": len(enhanced_routes),
+        "powered_by": "GPT-4o-mini + NYC Vision Zero Data"
     }
 
-# NEXT STEPS - CLEAN UP METADATA, REFINE LLM CALLS. MAKE SURE TOP RECOMMENDATIONS ARE CLEAR
