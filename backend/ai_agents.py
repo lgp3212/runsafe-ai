@@ -14,7 +14,19 @@ class SafetyAnalysisAgent:
             raise ValueError("OPENAI_API_KEY not found in .env file")
         self.client = openai.OpenAI(api_key=api_key)
 
-    def analyze_crash_data(self, crash_data: Dict, location_context: str = "") -> Dict:
+    def crash_data_llm_call(self, running_metadata) -> Dict:
+
+        # FIRST, CLEAN RUNNING METADATA. IT IS TOO LONG
+        # THEN WRITE PREPROCESSING FUNC TO UNPACK IT
+        # FEED ONLY WHAT IS NECESSARY TO LLM - WE WANT LLM 
+        # TO TAKE SAFETY SCORE AND COORDINATES.
+        # TO GIVE THE ROUTE A FUN NAME 
+        # WE BASICALLY WANT LLM TO RECOMMEND TOP 3 ROUTES
+        
+
+        crash_data = {}
+
+
         summary = crash_data.get("summary", {})
         crashes = crash_data.get("crashes", [])
         prompt = f"""
