@@ -40,9 +40,7 @@ def generate_optimized_endpoints(
         new_lng = start_lng + (lng_delta * math.sin(bearing_rad))
 
         # verify distance using Haversine
-        actual_distance = utils.calculate_distance(
-            start_lat, start_lng, new_lat, new_lng
-        )
+        actual_distance = utils.euc_distance(start_lat, start_lng, new_lat, new_lng)
 
         endpoint = {
             "lat": new_lat,
