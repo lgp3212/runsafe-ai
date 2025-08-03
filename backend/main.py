@@ -10,6 +10,8 @@ import polyline
 import polyline_safety_analysis as p
 from constants import SafetyApi
 
+import psycopg2
+
 app = FastAPI(title="runsafe-ai", version="0.1.0")
 
 safety_ai = None
@@ -30,96 +32,6 @@ def get_safety_ai():
             traceback.print_exc()
             return None
     return safety_ai
-
-
-def euc_distance(lat1: float, lng1: float, lat2: float, lng2: float):  # utils?
-    R = 6371
-    lat1_rad = math.radians(lat1)
-    lng1_rad = math.radians(lng1)
-    lat2_rad = math.radians(lat2)
-    lng2_rad = math.radians(lng2)
-
-    dlat = lat2_rad - lat1_rad
-    dlng = lng2_rad - lng1_rad
-
-    a = (
-        math.sin(dlat / 2) ** 2
-        + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlng / 2) ** 2
-    )
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-
-    return R * c
-
-
-@app.get("/api/crashes/near-me")
-def get_crashes_near_me(
-    lat: float, lng: float, radius_km: float = 1.0, days_back: int = 60, sapi=SafetyApi
-):
-    cutoff_date = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
-    url = sapi.URL.value
-    params = {
-        "$limit": 500,  # bringing in more records
-        "$order": "crash_date DESC",
-        "$where": f"latitude IS NOT NULL AND longitude IS NOT NULL AND crash_date >= '{cutoff_date}'",
-    }
-    try:
-        response = requests.get(url, params=params, timeout=15)
-
-        if response.status_code == 200:
-            all_crashes = response.json()
-
-            nearby_crashes = []  # filter to within radius
-            for crash in all_crashes:
-                try:
-                    crash_lat = float(crash.get("latitude", 0))
-                    crash_lng = float(crash.get("longitude", 0))
-
-                    distance = euc_distance(lat, lng, crash_lat, crash_lng)
-
-                    if distance <= radius_km:
-                        clean_crash = {
-                            "crash_id": crash.get("collision_id"),
-                            "date": crash.get("crash_date"),
-                            "distance_km": round(distance, 2),
-                            "location": {"lat": crash_lat, "lng": crash_lng},
-                            "injuries": int(crash.get("number_of_persons_injured", 0)),
-                            "fatalities": int(crash.get("number_of_persons_killed", 0)),
-                        }
-                        nearby_crashes.append(clean_crash)
-                except (ValueError, TypeError):
-                    continue
-
-            # safety summary
-            total_crashes = len(nearby_crashes)
-            injuries = sum(crash["injuries"] for crash in nearby_crashes)
-            total_fatalities = sum(crash["fatalities"] for crash in nearby_crashes)
-
-            return {
-                "search_location": {"lat": lat, "lng": lng},
-                "search_radius_km": radius_km,
-                "days_searched": days_back,
-                "summary": {
-                    "total_crashes": total_crashes,
-                    "total_injuries": injuries,
-                    "total_fatalities": total_fatalities,
-                    "safety_concern_level": (
-                        "Critical"
-                        if total_fatalities > 0
-                        else (
-                            "High"
-                            if injuries > 0
-                            else "Moderate" if total_crashes >= 3 else "Low"
-                        )
-                    ),
-                },
-                "data_source": "NYC Vision Zero / Motor Vehicle Collisions",
-            }
-
-        else:
-            return {"error": f"NYC API returned status {response.status_code}"}
-
-    except Exception as e:
-        return {"error": f"Failed to fetch nearby crashes: {str(e)}"}
 
 
 @app.get("/api/safety/ai-analysis")
@@ -159,7 +71,7 @@ def generate_running_routes(
         start_lng,
         target_distance_km,
         get_routes.optimized_route_finder,
-        get_crashes_near_me,
+        p.get_crashes_near_me,
     )
 
     # prep metadata for LLM
@@ -169,6 +81,9 @@ def generate_running_routes(
         "route_options": enhanced_routes,
     }
 
+    return route_metadata
+
+    """
     ai_agent = get_safety_ai()
     if ai_agent:
         try:
@@ -197,3 +112,4 @@ def generate_running_routes(
         "routes_analyzed": len(enhanced_routes),
         "powered_by": "GPT-4o-mini + NYC Vision Zero Data",
     }
+    """
