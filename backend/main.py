@@ -1,16 +1,10 @@
 from fastapi import FastAPI
-import requests
-import math
 from datetime import datetime, timedelta
 from ai_agents import SafetyAnalysisAgent
 
 # from test_google_routes import GoogleRoutesAPI
 import get_routes
-import polyline
 import polyline_safety_analysis as p
-from constants import SafetyApi
-
-import psycopg2
 
 app = FastAPI(title="runsafe-ai", version="0.1.0")
 
