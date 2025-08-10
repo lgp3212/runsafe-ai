@@ -123,7 +123,7 @@ def get_area_crash_percentiles(lat: float, lng: float, radius_km: float = 1.0, a
     try:
         conn = psycopg2.connect(
             host="localhost", database="runsafe_db", user="lpietrewicz", password=""
-        )
+        ) # TO BE CHANGED
         cursor = conn.cursor()
         
         # create a grid of sample points around the area to get distribution

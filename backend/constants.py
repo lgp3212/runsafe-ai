@@ -34,6 +34,19 @@ class CompassBearing(IntEnum):
     WEST = 270
     NORTHWEST = 315
 
+class DatabaseConfig(StrEnum):
+    HOST = "localhost"
+    DATABASE = "runsafe_db"
+    USER = "lpietrewicz"
+    PASSWORD = "" 
+
+class APIConfig(StrEnum):
+    NYC_CRASHES_URL = "https://data.cityofnewyork.us/resource/h9gi-nx95.json"
+    REQUEST_LIMIT = "50000"
+
+class ScheduleConfig(StrEnum):
+    DAILY_TIME = "02:00"
+    LOG_LEVEL = "INFO"
 
 ignore = [
     "North America",
