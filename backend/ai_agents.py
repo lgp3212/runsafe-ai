@@ -15,63 +15,28 @@ class SafetyAnalysisAgent:
             raise ValueError("OPENAI_API_KEY not found in .env file")
         self.client = openai.OpenAI(api_key=api_key)
 
-    def preprocess_for_llm(route_data):
-        for route in route_data["route_options"]:
-            if "polyline" in route:
-                del route["polyline"]
-        return route_data
 
-    def route_recommendation_llm_call(self, running_metadata) -> Dict:
-        """
-        Get LLM route recommendations based on safety and accuracy data
-        WIP -- next session
-        """
-        return {}
-
-    def _extract_top_recommendation(
-        self, analysis_text: str, routes: List[Dict]
-    ) -> Dict:
-        """
-        Try to extract which route the LLM recommended
-        """
-        analysis_lower = analysis_text.lower()
-
-        for route in routes:
-            direction = route["direction"].lower()
-            route_id = str(route["id"])
-
-            if any(
-                phrase in analysis_lower
-                for phrase in [
-                    f"recommend route {route_id}",
-                    f"choose route {route_id}",
-                    f"recommend {direction}",
-                    f"choose {direction}",
-                    f"route {route_id}",
-                    f"{direction} route",
-                ]
-            ):
-                return {
-                    "id": route["id"],
-                    "direction": route["direction"],
-                    "safety_score": route["safety"]["score"],
-                    "accuracy": route["accuracy"],
-                }
-
-        # default to highest combined score if can't parse
-        best_route = max(
-            routes, key=lambda x: (x["safety"]["score"] + x["accuracy"]) / 2
+    def make_call_to_llm(self, metadata):
+        response = self.client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {
+                "role": "system",
+                "content": """You are a running safety expert analyzing route options for runners in NYC. 
+                Safety scores are calculated based on comparing danger data to averages in that area.
+                There are several segments per route. Additional information is included for dangerous segments. 
+                Route length accuracy must also be considered in recommendation. 
+                Focus on practical advice that helps runners make informed decisions."""
+            },
+            {
+                "role": "user", 
+                "content": str(metadata)
+            }
+        ],
+        temperature=0.3, 
+        max_tokens=800  
         )
-        return {
-            "id": best_route["id"],
-            "direction": best_route["direction"],
-            "safety_score": best_route["safety"]["score"],
-            "accuracy": best_route["accuracy"],
-        }
+        print(response)
+        return response
+        
 
-    def get_route_recommendations(self, running_metadata) -> Dict:
-        """
-        Main function to call for route recommendations
-        Replace the old crash_data_llm_call with this function
-        """
-        return self.route_recommendation_llm_call(running_metadata)

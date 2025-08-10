@@ -21,7 +21,6 @@ def sample_route_points(route_points, max_samples=10):
     if not route_points or len(route_points) <= max_samples:
         return route_points
 
-    # evenly spacef points
     step = len(route_points) // max_samples
     sampled_points = []
 
@@ -32,7 +31,7 @@ def sample_route_points(route_points, max_samples=10):
                 "route_index": i,
                 "route_progress": round(
                     (i / len(route_points)) * 100, 1
-                ),  # Percentage along route
+                ),  # percentage along route
             }
         )
 
@@ -49,7 +48,7 @@ def sample_route_points(route_points, max_samples=10):
     return sampled_points
 
 
-def analyze_route_safety_detailed(route, get_crashes_function):
+def analyze_route_safety_detailed(route):
     """
     Comprehensive safety analysis using full route polyline
 
@@ -64,17 +63,7 @@ def analyze_route_safety_detailed(route, get_crashes_function):
     encoded_polyline = route.get("polyline", "")
     route_points = decode_route_polyline(encoded_polyline)
 
-    if not route_points:
-        return {
-            **route,
-            "safety_analysis": {
-                "error": "Could not decode route path",
-                "overall_safety_score": 50,
-                "dangerous_segments": [],
-            },
-        }
 
-    # sample 5 to avoid lots of api calls
     sample_points = sample_route_points(route_points, max_samples=5)
     segment_analyses = []  # analyze safety at each sample point
 
@@ -82,79 +71,39 @@ def analyze_route_safety_detailed(route, get_crashes_function):
         print(f"Processing point {i+1}/{len(sample_points)}: {point}")
 
         # get crash data near this point (smaller radius since we're checking multiple points)
-        crashes_response = get_crashes_function(
+        crashes_response = get_crashes_near_me(
             point["lat"],
             point["lng"],
             radius_km=0.5,  # WIP - smaller radius since we're sampling along route
             days_back=60,
         )
+
         print(f"Got crashes response for point {i+1}")
-        segment_safety = calculate_safety_score(crashes_response)
 
         segment_analysis = {
             "point_index": i,
             "route_progress": point.get("route_progress", 0),
             "coordinates": {"lat": point["lat"], "lng": point["lng"]},
-            "crashes_nearby": crashes_response["summary"]["total_crashes"],
-            "injuries": crashes_response["summary"]["total_injuries"],
-            "safety_score": segment_safety,
-            "safety_level": get_safety_level(segment_safety),
+            "counts": crashes_response["summary"],
+            "safety_score": crashes_response["safety"]
         }
         segment_analyses.append(segment_analysis)
 
-    # calculate overall route safety metrics
     safety_scores = [seg["safety_score"] for seg in segment_analyses]
     overall_safety = sum(safety_scores) / len(safety_scores)
 
-    dangerous_segments = [seg for seg in segment_analyses if seg["safety_score"] < 60]
+    dangerous_segments = [seg for seg in segment_analyses if seg["safety_score"] < 80]
     return {
         **route,
         "safety_analysis": {
             "overall_safety_score": round(overall_safety, 1),
-            "safety_level": get_safety_level(overall_safety),
             "dangerous_segments": dangerous_segments,
         },
     }
 
 
-def calculate_safety_score(dict):
-    """Calculate safety score from 0-100 based on crash data"""
-
-    print(dict)
-    summary = dict["summary"]
-
-    total_crashes = summary.get("total_crashes", 0)
-    total_injuries = summary.get("total_injuries", 0)
-    total_fatalities = summary.get("total_fatalities", 0)
-
-    # start with 100 and subtract points for safety issues
-    safety_score = 100
-    print("still no error? 3")
-    print()
-    safety_score -= total_crashes * 25
-    safety_score -= total_injuries * 50
-    safety_score -= total_fatalities * 75
-
-    # ensure score stays between 0-100
-    return max(0, min(100, safety_score))
-
-
-def get_safety_level(safety_score):
-    """Convert numeric safety score to descriptive level"""
-    if safety_score >= 85:
-        return "Very Safe"
-    elif safety_score >= 70:
-        return "Safe"
-    elif safety_score >= 55:
-        return "Moderate Risk"
-    elif safety_score >= 40:
-        return "Higher Risk"
-    else:
-        return "High Risk"
-
-
 def generate_running_routes_with_polyline_safety(
-    start_lat, start_lng, target_distance_km, get_routes_function, get_crashes_function
+    start_lat, start_lng, target_distance_km, get_routes_function
 ):
     """
     Main function to generate routes with detailed polyline-based safety analysis
@@ -165,13 +114,63 @@ def generate_running_routes_with_polyline_safety(
 
     enhanced_routes = []
     for route in routes:
-        enhanced_route = analyze_route_safety_detailed(route, get_crashes_function)
+        enhanced_route = analyze_route_safety_detailed(route)
         enhanced_routes.append(enhanced_route)
     return enhanced_routes
 
+def get_area_crash_percentiles(lat: float, lng: float, radius_km: float = 1.0, attr="injuries"):
+    """Calculate crash percentiles for areas similar to the query location"""
+    try:
+        conn = psycopg2.connect(
+            host="localhost", database="runsafe_db", user="lpietrewicz", password=""
+        )
+        cursor = conn.cursor()
+        
+        # create a grid of sample points around the area to get distribution
+        grid_size = 0.01
+        sample_points = []
+
+        sql = {
+            f"{attr}": f"COALESCE(SUM({attr}), 0)",
+            "crashes": "COUNT(*)",
+        }
+        
+        for lat_offset in [-2*grid_size, -grid_size, 0, grid_size, 2*grid_size]:
+            for lng_offset in [-2*grid_size, -grid_size, 0, grid_size, 2*grid_size]:
+                sample_lat = lat + lat_offset
+                sample_lng = lng + lng_offset
+                
+                lat_buffer = radius_km / 111.0
+                lng_buffer = radius_km / (111.0 * math.cos(math.radians(sample_lat)))
+                
+                cursor.execute(
+                    f"""
+                    SELECT 
+                        {sql[f"{attr}"]} as {attr}
+                    FROM crashes
+                    WHERE latitude BETWEEN %s AND %s
+                    AND longitude BETWEEN %s AND %s
+                    """,
+                    (sample_lat - lat_buffer, sample_lat + lat_buffer, 
+                     sample_lng - lng_buffer, sample_lng + lng_buffer),
+                )
+                
+                count = cursor.fetchone()[0]
+                sample_points.append(count)
+        
+        conn.close()
+        
+        sample_points.sort()
+        p50_index = int(0.5 * len(sample_points))
+        
+        return sample_points[p50_index]
+        
+    except Exception as e:
+        return {"error": f"Percentile calculation failed: {str(e)}"}
+
 
 def get_crashes_near_me(
-    lat: float, lng: float, radius_km: float = 1.0, days_back: int = 60
+    lat: float, lng: float, radius_km: float = 0.5, days_back: int = 60
 ):
     try:
         # WIP - move this out
@@ -215,9 +214,7 @@ def get_crashes_near_me(
                 nearby_crashes.append(clean_crash)
 
         # summary
-        total_crashes = len(nearby_crashes)
-        total_injuries = sum(crash["injuries"] for crash in nearby_crashes)
-        total_fatalities = sum(crash["fatalities"] for crash in nearby_crashes)
+        safety_score, total_crashes, total_injuries, total_fatalities = safety_wrapper(lat, lng, radius_km, nearby_crashes)
 
         return {
             "search_location": {"lat": lat, "lng": lng},
@@ -227,18 +224,41 @@ def get_crashes_near_me(
                 "total_crashes": total_crashes,
                 "total_injuries": total_injuries,
                 "total_fatalities": total_fatalities,
-                "safety_concern_level": (
-                    "Critical"
-                    if total_fatalities > 0
-                    else (
-                        "High"
-                        if total_injuries > 0
-                        else "Moderate" if total_crashes >= 3 else "Low"
-                    )
-                ),
             },
-            "data_source": "Local PostgreSQL Database (NYC Vision Zero)",
+            "safety": safety_score
         }
 
     except Exception as e:
         return {"error": f"Database query failed: {str(e)}"}
+
+def calculate_safety_score_logarithmic(crash_ratio, injury_ratio, fatality_ratio):
+    """Calculate safety score using logarithmic scaling for extreme ratios"""
+    crash_penalty = min(30, max(0, 15 * math.log(max(crash_ratio, 0.1))))
+    injury_penalty = min(35, max(0, 20 * math.log(max(injury_ratio, 0.1))))
+    if fatality_ratio == 0:
+        fatality_penalty = 0
+    else:
+        fatality_penalty = min(50, max(0, 25 * math.log(max(fatality_ratio, 0.1))))
+    
+    safety_score = 100 - crash_penalty - injury_penalty - fatality_penalty
+    return max(0, min(100, safety_score))
+
+def safety_wrapper(lat, lng, radius_km, nearby_crashes):
+    total_crashes = len(nearby_crashes)
+    total_injuries = sum(crash["injuries"] for crash in nearby_crashes)
+    total_fatalities = sum(crash["fatalities"] for crash in nearby_crashes)
+
+
+    percentile50_crashes = get_area_crash_percentiles(lat, lng, radius_km=radius_km, attr="crashes")
+    percentile50_injuries = get_area_crash_percentiles(lat, lng, radius_km=radius_km, attr="injuries")
+    percentile50_fatalities = get_area_crash_percentiles(lat, lng, radius_km=radius_km, attr="fatalities")
+    try:
+        fatality_r = total_fatalities / percentile50_fatalities
+    except ZeroDivisionError:
+        fatality_r = total_fatalities
+
+    crash_r = total_crashes / percentile50_crashes
+    injury_r = total_injuries / percentile50_injuries
+
+    safety_score = calculate_safety_score_logarithmic(crash_r, injury_r, fatality_r)
+    return safety_score, total_crashes, total_injuries, total_fatalities
